@@ -1,0 +1,27 @@
+menu "M5 controller Configuration"
+
+config SSID
+    string "WIFI access point name (SSID)"
+    default "hachidori_ap"
+    help
+        Enter the name of the WIFI access point
+
+config SSID_PASSWORD
+    string "WIFI password"
+    default "e15f44ecdff3a"
+    help
+        Enter ssid password
+
+config APM_SERVER_ADDRESS
+    string "IPv4 address of APM host"
+    default "192.168.11.1"
+    help
+        IP address of the APM host, normaly same with AP_ADDRESS
+
+config TELEMETORY_PORT
+    int "telemetory port"
+    default 5900
+    help
+        TCP port which host uses for telemetry
+
+endmenu

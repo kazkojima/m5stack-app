@@ -12,17 +12,23 @@ config SSID_PASSWORD
     help
         Enter ssid password
 
-config UDP_SERVER_ADDRESS
-    string "IPv4 address of UDP server"
+config APM_SERVER_ADDRESS
+    string "IPv4 address of server"
     default "192.168.11.1"
     help
-        IP address of the UDP server, normaly same with AP_ADDRESS
+        IP address of the server, normaly same with AP_ADDRESS
 
 config UDP_PORT
     int "UDP port"
     default 5990
     help
         UDP port used for both Wi-Fi and ether
+
+config TELEMETORY_PORT
+    int "telemetory port"
+    default 5900
+    help
+        TCP port which host uses for telemetry
 
 config THROTTLE_BUTTON
     bool "Enable throttle buttons"
@@ -38,15 +44,35 @@ config THROTTLE_HOVER
     help
 	Hover throttle PWM value. With pressing button B, throttle becomes to this value at constant rate.
 
-config DISPLAY_TYPE
-    int "How to display channel value. (0:no 1:bar 2:mark)
-    default 1
-    range 0 2
+config YAW_RATIO
+    int "YAW ratio"
+    default 8
+    range 0 15
     help
-        If 1, bars are used to display channel valued. If 2, moving "x" mark is used. Otherwise, no display.
+	Ratio YAW error to YAW PWM value change in %.
+
+config YAW_FIX
+    int "YAW fixup value"
+    default 0
+    range -90 90
+    help
+	YAW fixup degree to heading differnce of M5.
+
+choice
+    prompt "How to display channel values"
+    default DISPLAY_TYPE_BAR
+
+config DISPLAY_TYPE_BAR
+    bool "Display with bars"
+    
+config DISPLAY_TYPE_MARK
+    bool "Display with x mark"
+
+endchoice
 
 config DISPLAY_COMPASS
     bool "Display estimated compass"
+    depends on DISPLAY_TYPE_MARK
     default "n"
     help
 	If enabled, display estimated north direction. Only when DISPLAY_TYPE is 2.

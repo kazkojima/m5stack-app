@@ -1,9 +1,13 @@
 /// -*- tab-width: 4; Mode: C++; c-basic-offset: 4; indent-tabs-mode: nil -*-
 #include <M5Stack.h>
 #include <WiFi.h>
+
 #undef F
+#include <mavlink_types.h>
 #define MAVLINK_USE_CONVENIENCE_FUNCTIONS 1
 #define MAVLINK_SEND_UART_BYTES send_tcp_bytes
+static void send_tcp_bytes(mavlink_channel_t chan, const uint8_t *buf, uint16_t len);
+extern mavlink_system_t mavlink_system;
 #include <mavlink.h>
 
 #if CONFIG_FREERTOS_UNICORE
@@ -11,10 +15,6 @@
 #else
 #define ARDUINO_RUNNING_CORE 1
 #endif
-
-#define NO_DYSPLAY 0
-#define DISPLAY_BAR 1
-#define DISPLAY_MARK 2
 
 const char *networkName = CONFIG_SSID;
 const char *networkPswd = CONFIG_SSID_PASSWORD;
@@ -27,6 +27,7 @@ const int tcpPort = CONFIG_TELEMETORY_PORT;
 
 //Are we currently connected?
 boolean connected = false;
+boolean telemetry_connected = false;
 
 // UDP telemetory socket
 WiFiClient client;
@@ -46,7 +47,8 @@ static void WiFiEvent(WiFiEvent_t event){
           M5.Lcd.print("WiFi connected! IP address: ");
           M5.Lcd.print(WiFi.localIP());
 
-          client.connect(tcpAddress, tcpPort);
+          if(client.connect(tcpAddress, tcpPort))
+              telemetry_connected = true;
           connected = true;
           break;
       case SYSTEM_EVENT_STA_DISCONNECTED:
@@ -95,13 +97,11 @@ void setup(){
     connectToWiFi(networkName, networkPswd);
 }
 
-extern "C" {
-}
-
 uint8_t target_sysid;
 uint8_t target_compid;
 mavlink_system_t mavlink_system = { 20, 99 };
 boolean request_sent = false;
+int count;
 
 static void send_tcp_bytes(mavlink_channel_t chan, const uint8_t *buf,
                            uint16_t len)
@@ -155,7 +155,7 @@ void loop() {
                         target_compid = msg.compid;
                         if (!request_sent) {
                             const uint8_t stream_id = MAV_DATA_STREAM_EXTRA1;
-                            mavlink_msg_request_data_stream_send((mavlink_channel_t)0,
+                            mavlink_msg_request_data_stream_send(MAVLINK_COMM_0,
                                                                  target_sysid,
                                                                  target_compid,
                                                                  stream_id,
@@ -200,6 +200,13 @@ void loop() {
                     }
             }
         }
+
+        if (!telemetry_connected && (count % 1000) == 0) {
+          if(client.connect(tcpAddress, tcpPort))
+              telemetry_connected = true;
+        }
+
+        count++;
     }
 
     M5.update();

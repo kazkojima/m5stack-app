@@ -4,30 +4,38 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
+#undef F
+#include <mavlink_types.h>
+#define MAVLINK_USE_CONVENIENCE_FUNCTIONS 1
+#define MAVLINK_SEND_UART_BYTES send_tcp_bytes
+static void send_tcp_bytes(mavlink_channel_t chan, const uint8_t *buf, uint16_t len);
+extern mavlink_system_t mavlink_system;
+#include <mavlink.h>
+
 #if CONFIG_FREERTOS_UNICORE
 #define ARDUINO_RUNNING_CORE 0
 #else
 #define ARDUINO_RUNNING_CORE 1
 #endif
 
-#define NO_DYSPLAY 0
-#define DISPLAY_BAR 1
-#define DISPLAY_MARK 2
-
 const char *networkName = CONFIG_SSID;
 const char *networkPswd = CONFIG_SSID_PASSWORD;
 
-//IP address to send UDP data to:
-// either use the ip address of the server or
-// a network broadcast address
-const char *udpAddress = CONFIG_UDP_SERVER_ADDRESS;
+//APM server IP address
+const char *udpAddress = CONFIG_APM_SERVER_ADDRESS;
 const int udpPort = CONFIG_UDP_PORT;
+const char *tcpAddress = CONFIG_APM_SERVER_ADDRESS;
+const int tcpPort = CONFIG_TELEMETORY_PORT;
 
 //Are we currently connected?
 boolean connected = false;
+boolean telemetry_connected = false;
 
 //The udp library class
 WiFiUDP udp;
+
+//TCP telemetory client
+WiFiClient client;
 
 struct __attribute__((packed)) rcpkt {
     uint32_t version;
@@ -55,9 +63,11 @@ static void WiFiEvent(WiFiEvent_t event){
           //This initializes the transfer buffer
           udp.begin(WiFi.localIP(),udpPort);
           connected = true;
+          if(client.connect(tcpAddress, tcpPort))
+              telemetry_connected = true;
           break;
       case SYSTEM_EVENT_STA_DISCONNECTED:
-	  Serial.println("WiFi lost connection");
+          Serial.println("WiFi lost connection");
 
           // Start device display with ID of sensor
           M5.Lcd.fillRect(20, 0, 300, 16, BLACK);
@@ -108,7 +118,7 @@ void setup(){
     M5.Lcd.setCursor(20,0);
     M5.Lcd.printf("M5 propo");
 
-#if (CONFIG_DISPLAY_TYPE == DISPLAY_BAR)
+#if CONFIG_DISPLAY_TYPE_BAR
     M5.Lcd.setTextColor(WHITE, BLACK);
     M5.Lcd.setCursor(40,28);
     M5.Lcd.printf("CH1: ROLL");
@@ -129,6 +139,63 @@ extern "C" {
     void imu_task(void *arg);
 }
 
+boolean telemetry_yaw_ok = false;
+float telemetry_yaw;
+
+uint8_t target_sysid;
+uint8_t target_compid;
+mavlink_system_t mavlink_system = { 20, 99 };
+boolean request_sent = false;
+
+static void send_tcp_bytes(mavlink_channel_t chan, const uint8_t *buf,
+                           uint16_t len)
+{
+    client.write(buf, len);
+}
+
+void check_telemetry(void)
+{
+    if (!telemetry_connected)
+        return;
+    for(;;) {
+        if (client.available() > 0) {
+            uint8_t c = client.read();
+            mavlink_message_t msg;
+            mavlink_status_t status;
+            if (mavlink_parse_char(MAVLINK_COMM_0, c, &msg, &status)) {
+                switch(msg.msgid)
+                    {
+                    case MAVLINK_MSG_ID_HEARTBEAT:
+                        target_sysid = msg.sysid;
+                        target_compid = msg.compid;
+                        if (!request_sent) {
+                            const uint8_t stream_id = MAV_DATA_STREAM_EXTRA1;
+                            mavlink_msg_request_data_stream_send(MAVLINK_COMM_0,
+                                                                 target_sysid,
+                                                                 target_compid,
+                                                                 stream_id,
+                                                                 10,
+                                                                 1);
+                            request_sent = true;
+                        }
+                        break;
+                    case MAVLINK_MSG_ID_ATTITUDE:
+                        //Serial.println("ATTITUDE");
+                        mavlink_attitude_t attitude;
+                        mavlink_msg_attitude_decode(&msg, &attitude);
+                        telemetry_yaw = attitude.yaw;
+                        telemetry_yaw_ok = true;
+                        //Serial.println(telemetry_yaw);
+                        break;
+                    default:
+                        break;
+                      }
+            }
+        } else
+            break;
+    }
+}
+
 static uint16_t pwm_sat(uint16_t pwm)
 {
     if (pwm > 1900)
@@ -146,10 +213,11 @@ uint16_t rcpkt_count;
 int32_t prev_cx, prev_cy, prev_mx, prev_my;
 int count;
 
-#if (CONFIG_DISPLAY_TYPE == DISPLAY_BAR)
+#if CONFIG_DISPLAY_TYPE_BAR
 const uint8_t xo = 28;
 const uint8_t yo = 60;
 const uint8_t bw = 160;
+#endif
 
 static inline float curve(float x)
 {
@@ -166,15 +234,33 @@ static inline float curve(float x)
     else if (x > 1) return 1.0;
     return x;
 }
-#endif
 
 // The loop routine runs over and over again forever
 void loop() {
 
+    check_telemetry();
+
     float att[4];
     if (xQueueReceive(att_queue, &att[0], 0) == pdTRUE) {
+        float yawerr = 0;
+        if (telemetry_yaw_ok) {
+            float yawfix = CONFIG_YAW_FIX / 57.29578f;
+            float tel_n = cosf(telemetry_yaw - yawfix);
+            float tel_e = sinf(telemetry_yaw - yawfix);
+            float r = sqrtf(att[2]*att[2]+ att[3]*att[3]);
+            //Serial.println("n "+String(tel_n)+" e "+String(tel_e));
+            //Serial.println("N "+String(att[2]/r)+" E "+String(att[3]/r));
+            yawerr = -(tel_e * (att[2]/r) - tel_n * (att[3]/r));
+            if (yawerr > 1.0)
+                yawerr = 1.0;
+            else if (yawerr < -1.0)
+                yawerr = -1.0;
+            yawerr *= CONFIG_YAW_RATIO / 100.0f;
+            Serial.println("E "+String(yawerr));
+        }
+   
         if ((count % 10) == 0) {
-#if (CONFIG_DISPLAY_TYPE == DISPLAY_BAR)
+#if CONFIG_DISPLAY_TYPE_BAR
             uint8_t v;
             // Display roll bar
             v = (uint8_t)(curve(att[0])*bw);
@@ -189,10 +275,10 @@ void loop() {
             M5.Lcd.fillRect(280, yo, 24, bw-v, TFT_DARKGREY);
             M5.Lcd.fillRect(280, yo+bw-v, 24, v, ORANGE);
             // Display yaw bar. Test only.
-            v = (uint8_t)(0.5*bw);
+            v = (uint8_t)((yawerr+0.5)*bw);
             M5.Lcd.fillRect(xo, 224, v, 16, YELLOW);
             M5.Lcd.fillRect(xo+v, 224, bw-v, 16, TFT_DARKGREY);
-#elif (CONFIG_DISPLAY_TYPE == DISPLAY_MARK)
+#elif CONFIG_DISPLAY_TYPE_MARK
             int32_t cx, cy;
             cx = (int32_t)(240*att[0]);
             cy = (int32_t)(240*att[1]);
@@ -234,9 +320,9 @@ void loop() {
         }
 
         float pwm_thr, pwm_pitch, pwm_roll, pwm_yaw;
-        pwm_roll = pwm_sat((int16_t)(att[0] * 800) + 1500+(5));
-        pwm_pitch = pwm_sat((int16_t)(att[1] * 800) + 1500+(-10));
-        pwm_yaw = 1500+(60);
+            pwm_roll = pwm_sat((int16_t)(curve(att[0]) * 800) + 1100 +(5));
+            pwm_pitch = pwm_sat((int16_t)(curve(att[1]) * 800) + 1100 +(-10));
+            pwm_yaw = pwm_sat((int16_t)(yawerr * 800) + 1500 +(60));
 #if CONFIG_THROTTLE_BUTTON
         if(M5.BtnA.isPressed()) {
             throttle -= 0.001;
@@ -287,6 +373,11 @@ void loop() {
             udp.beginPacket(udpAddress,udpPort);
             udp.write((const uint8_t *)&pkt, sizeof(pkt));
             udp.endPacket();
+        }
+
+        if (!telemetry_connected && (count % 1000) == 0) {
+          if(client.connect(tcpAddress, tcpPort))
+              telemetry_connected = true;
         }
 
         count++;

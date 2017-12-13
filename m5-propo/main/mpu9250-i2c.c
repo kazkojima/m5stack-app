@@ -449,42 +449,7 @@ static void ak8963_start(void)
 #else
 #define COMPASS_MODE_ZHINANCHE 0
 #endif
-static float m5_mag_offset[3] = { -5930.0, 4020.0, -3155.0 };
-// Ratio at Tokyo
-static float m_vert = 0.761386;
-static float m_hol =  0.648298;
-static float compass_x, compass_y, compass_z;
-
-// World to local i.e. Q *P Q^-1 where *P is pure quaternion
-static void
-qconjugate2(float *p0, float *p1, float *p2, float *p3)
-{
-    float b = *p1, c = *p2, d = *p3;
-
-    *p1 = -q2*(d*q0 - c*q1 + b*q2) + q3*(c*q0 + d*q1 - b*q3)
-        + q0*(b*q0 - d*q2 + c*q3) + q1*(b*q1 + c*q2 + d*q3);
-    *p2 = q1*(d*q0 - c*q1 + b*q2) + q0*(c*q0 + d*q1 - b*q3)
-        - q3*(b*q0 - d*q2 + c*q3) + q2*(b*q1 + c*q2 + d*q3);
-    *p3 = q0*(d*q0 - c*q1 + b*q2) - q1*(c*q0 + d*q1 - b*q3)
-        + q2*(b*q0 - d*q2 + c*q3) + q3*(b*q1 + c*q2 + d*q3);
-}
-
-static void compass_update(void)
-{
-    // Very rough estimation of holizontal heading.  Reasonable only
-    // when the attitude is almost holizontal.
-    float a = 0.0f, b, c, d = -m_vert;
-    float b2 = q1*q1 - q2*q2, c2 = 2*q1*q2;
-    c = -(b2*b2 - c2*c2) * m_hol;
-    b = 2*b2*c2 * m_hol;
-    //printf("mx: %f my: %f mz: %f -> ", b, c, d);
-    qconjugate2(&a, &b, &c, &d);
-    //printf("MX: %7.3f MY: %7.3f MZ: %7.3f\n", c, b, d);
-    compass_x = c; // North
-    compass_y = b; // East
-    compass_z = d; // Down
-}
-
+static float m5_mag_offset[3] = { -5780.0, 4020.0, -3155.0 };
 extern xQueueHandle att_queue;
   
 void imu_task(void *arg)
@@ -676,21 +641,20 @@ void imu_task(void *arg)
                 beta = 32.0f;
                 MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
             } else {
-                beta = 0.2f;
+                beta = 1.0f;
                 if (!COMPASS_MODE_ZHINANCHE)
                     MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
             }
             //printf ("q0 %7.3f q1 %7.3f q2 %7.3f q3 %7.3f\n", q0, q1, q2, q3);
             //printf("mx: %f my: %f mz: %f\n", mx, my, mz);
-            compass_update();
 
             // These are linear approximations which would be enough for
             // our purpose.
             float att[4];
             att[0] = -(q0*q1+q3*q2);
             att[1] = -(q0*q2-q3*q1);
-            att[2] = compass_x;
-            att[3] = compass_y;
+            att[2] = (0.5-(q2*q2+q3*q3));
+            att[3] = -(q0*q3+q1*q2);
             //printf ("roll %7.5f pitch %7.5f\n", att[0], att[1]);
             if (xQueueSend(att_queue, &att[0], 0) != pdTRUE) {
                 printf("fail to queue attitude\n");

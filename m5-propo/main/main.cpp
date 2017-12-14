@@ -4,6 +4,10 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
+#include "esp_partition.h"
+#include "nvs_flash.h"
+#include "nvs.h"
+
 #undef F
 #include <mavlink_types.h>
 #define MAVLINK_USE_CONVENIENCE_FUNCTIONS 1
@@ -118,18 +122,6 @@ void setup(){
     M5.Lcd.setCursor(20,0);
     M5.Lcd.printf("M5 propo");
 
-#if CONFIG_DISPLAY_TYPE_BAR
-    M5.Lcd.setTextColor(WHITE, BLACK);
-    M5.Lcd.setCursor(40,28);
-    M5.Lcd.printf("CH1: ROLL");
-    M5.Lcd.setCursor(30,130);
-    M5.Lcd.printf("CH2: PITCH");
-    M5.Lcd.setCursor(40,212);
-    M5.Lcd.printf("CH4: YAW");
-    M5.Lcd.setCursor(196,130);
-    M5.Lcd.printf("CH3: THROTTLE");
-#endif
-
     //Connect to the WiFi network
     connectToWiFi(networkName, networkPswd);
 }
@@ -210,15 +202,50 @@ const float throttle_hover = (CONFIG_THROTTLE_HOVER - 1100) / 800.0;
 #endif
 float throttle = 0.0; // % of throttle
 uint16_t rcpkt_count;
-int32_t prev_cx, prev_cy, prev_mx, prev_my;
 int count;
 
 #if CONFIG_DISPLAY_TYPE_BAR
 const uint8_t xo = 28;
 const uint8_t yo = 60;
 const uint8_t bw = 160;
+#elif CONFIG_DISPLAY_TYPE_MARK
+int32_t prev_cx, prev_cy, prev_mx, prev_my;
 #endif
 
+enum adjust {
+    CH1_OFFSET = 0,
+    CH2_OFFSET,
+    CH3_OFFSET,
+    CH4_OFFSET,
+    YAW_SENSE,
+    YAW_FIX,
+    EXT_ADJUST,
+    ADJUST_NVS
+};
+#define N_ADJUST 8
+int adjust_index;
+int16_t adjust[N_ADJUST];
+const struct { int16_t min; int16_t max; } adjust_range[N_ADJUST] = { 
+    { -200, +200 },
+    { -200, +200 },
+    { -200, +200 },
+    { -200, +200 },
+    { 0, 15 },
+    { -90, 90 },
+    { 0, 0 },
+    { 0, 0 },
+};
+const char *adjust_string[N_ADJUST] = {
+    "Roll offset",
+    "Pitch offset",
+    "Throttle offset",
+    "Yaw offset",
+    "Yaw sensitivity",
+    "Yaw misalign",
+    "Reserved",
+    "Load/Save",
+};
+    
 static inline float curve(float x)
 {
 #if 1
@@ -227,7 +254,7 @@ static inline float curve(float x)
         v = - x*x;
     else
         v = x*x;
-    x = v;
+    x = 2*v;
 #endif
     x += 0.5;
     if (x < 0) return 0.0;
@@ -244,7 +271,7 @@ void loop() {
     if (xQueueReceive(att_queue, &att[0], 0) == pdTRUE) {
         float yawerr = 0;
         if (telemetry_yaw_ok) {
-            float yawfix = CONFIG_YAW_FIX / 57.29578f;
+            float yawfix = adjust[YAW_FIX] / 57.29578f;
             float tel_n = cosf(telemetry_yaw - yawfix);
             float tel_e = sinf(telemetry_yaw - yawfix);
             float r = sqrtf(att[2]*att[2]+ att[3]*att[3]);
@@ -255,8 +282,8 @@ void loop() {
                 yawerr = 1.0;
             else if (yawerr < -1.0)
                 yawerr = -1.0;
-            yawerr *= CONFIG_YAW_RATIO / 100.0f;
-            Serial.println("E "+String(yawerr));
+            yawerr *= adjust[YAW_SENSE] / 100.0f;
+            //Serial.println("E "+String(yawerr));
         }
    
         if ((count % 10) == 0) {
@@ -320,17 +347,20 @@ void loop() {
         }
 
         float pwm_thr, pwm_pitch, pwm_roll, pwm_yaw;
-            pwm_roll = pwm_sat((int16_t)(curve(att[0]) * 800) + 1100 +(5));
-            pwm_pitch = pwm_sat((int16_t)(curve(att[1]) * 800) + 1100 +(-10));
-            pwm_yaw = pwm_sat((int16_t)(yawerr * 800) + 1500 +(60));
+            pwm_roll = pwm_sat((int16_t)(curve(att[0])*800) + 1100
+                               + adjust[CH1_OFFSET]);
+            pwm_pitch = pwm_sat((int16_t)(curve(att[1])*800) + 1100
+                                + adjust[CH2_OFFSET]);
+            pwm_yaw = pwm_sat((int16_t)(yawerr*800) + 1500
+                              + adjust[CH4_OFFSET]);
 #if CONFIG_THROTTLE_BUTTON
         if(M5.BtnA.isPressed()) {
-            throttle -= 0.001;
+            throttle -= 0.002;
             if (throttle < 0)
                 throttle = 0;
         }
         if (M5.BtnC.isPressed()) {
-            throttle += 0.001;
+            throttle += 0.002;
             if (throttle > 100.0)
                 throttle = 100.0;
         }
@@ -356,7 +386,7 @@ void loop() {
         adc = (adc - 0.1) / 0.8;
         throttle = 0.9*throttle + 0.1*adc;
 #endif
-        pwm_thr = pwm_sat((uint16_t)(throttle*800) + 1100);
+        pwm_thr = pwm_sat((uint16_t)(throttle*800) + 1100 + adjust[CH3_OFFSET]);
 
         if (connected) {
             struct rcpkt pkt;
@@ -387,19 +417,178 @@ void loop() {
     delay(1);
 }
 
+bool config_loop = false;
+
+const char *var[] = {
+    "adj_0", "adj_1", "adj_2", "adj_3", "adj_4", "adj_5", "adj_6", };
+
+// Alternative loop for configuration mode
+void loop_conf() {
+    static bool update = true;
+    if (M5.BtnB.wasPressed()) {
+        adjust_index = (adjust_index + 1) % N_ADJUST;
+        update = true;
+    }
+    if (adjust_index != ADJUST_NVS) {
+        if (M5.BtnC.wasPressed()) {
+            if (adjust[adjust_index] < adjust_range[adjust_index].max) {
+                adjust[adjust_index]++;
+                update = true;
+            }
+        }
+        if (M5.BtnA.wasPressed()) {
+            if (adjust[adjust_index] > adjust_range[adjust_index].min) {
+                adjust[adjust_index]--;
+                update = true;
+            }
+        }
+    } else {
+        nvs_handle storage_handle;
+        esp_err_t err;
+        if (M5.BtnA.wasPressed()) {
+            // Load
+            err = nvs_open("storage", NVS_READWRITE, &storage_handle);
+            if (err != ESP_OK) {
+                Serial.println("NVS can't be opened");
+            } else {
+                int32_t v;
+                for (int i = 0; i < N_ADJUST - 1; i++) {
+                    err = nvs_get_i32(storage_handle, var[i], &v);
+                    if (err != ESP_OK) v = 0;
+                    adjust[i] = v;
+                }
+            }
+            nvs_close(storage_handle);
+            update = true;
+        }
+        if (M5.BtnC.wasPressed()) {
+            // Save
+            err = nvs_open("storage", NVS_READWRITE, &storage_handle);
+            if (err != ESP_OK) {
+                Serial.println("NVS can't be opened");
+            } else {
+                int32_t v;
+                for (int i = 0; i < N_ADJUST - 1; i++) {
+                    v = adjust[i];
+                    err = nvs_set_i32(storage_handle, var[i], v);
+                    if (err != ESP_OK) {
+                        nvs_commit(storage_handle);
+                    }
+                }
+            }
+            nvs_close(storage_handle);
+            update = true;
+        }
+    }
+
+    if (update) {
+        for (int i = 0; i < N_ADJUST; i++) {
+            if (adjust_index == i) {
+                M5.Lcd.setTextColor(WHITE, BLACK);
+            } else {
+                M5.Lcd.setTextColor(TFT_DARKGREY, BLACK);
+            }
+            M5.Lcd.setCursor(30, 28+i*24);
+            M5.Lcd.printf(adjust_string[i]);
+            M5.Lcd.fillRect(140, 28+i*24, 200, 16, BLACK);
+            if (adjust_index == i) {
+                M5.Lcd.setTextColor(GREEN, BLACK);
+            } else {
+                M5.Lcd.setTextColor(TFT_DARKGREY, BLACK);
+            }
+            M5.Lcd.setCursor(140, 28+i*24);
+            if (i != ADJUST_NVS) {
+                M5.Lcd.printf("%4d", adjust[i]);
+            } else {
+                M5.Lcd.printf("A:Load C:Save");
+            }
+            update = false;
+        }
+    }
+
+    M5.update();
+    delay(1);
+}
+
 // The arduino task
 void loopTask(void *pvParameters)
 {
     setup();
+
+    nvs_handle storage_handle;
+    esp_err_t err;
+    err = nvs_open("storage", NVS_READWRITE, &storage_handle);
+    if (err != ESP_OK) {
+        Serial.println("NVS can't be opened");
+    } else {
+        int32_t v;
+        for (int i = 0; i < N_ADJUST - 1; i++) {
+            err = nvs_get_i32(storage_handle, var[i], &v);
+            if (err != ESP_OK) v = 0;
+            adjust[i] = v;
+        }
+    }
+
+    if (M5.BtnA.isPressed() || M5.BtnB.isPressed() || M5.BtnC.isPressed()) {
+        config_loop = true;
+
+        for (int i = 0; i < N_ADJUST; i++) {
+            nvs_close(storage_handle);
+            M5.Lcd.setTextColor(TFT_DARKGREY, BLACK);
+            M5.Lcd.setCursor(30, 28+i*24);
+            M5.Lcd.printf(adjust_string[i]);
+            M5.Lcd.setCursor(140, 28+i*24);
+            if (i != ADJUST_NVS) {
+                M5.Lcd.printf("%4d", adjust[i]);
+            } else {
+                M5.Lcd.printf("A:Load C:Save");
+            }
+        }
+    } else {
+#if CONFIG_DISPLAY_TYPE_BAR
+        M5.Lcd.setTextColor(WHITE, BLACK);
+        M5.Lcd.setCursor(40,28);
+        M5.Lcd.printf("CH1: ROLL");
+        M5.Lcd.setCursor(30,130);
+        M5.Lcd.printf("CH2: PITCH");
+        M5.Lcd.setCursor(40,212);
+        M5.Lcd.printf("CH4: YAW");
+        M5.Lcd.setCursor(196,130);
+        M5.Lcd.printf("CH3: THROTTLE");
+#endif
+    }
+        
     for(;;) {
         micros(); //update overflow
-        loop();
+        if (config_loop) {
+            loop_conf();
+        } else {
+            loop();
+        }
     }
+}
+
+void nvs_init(void)
+{
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
+        // NVS partition was truncated and needs to be erased
+        const esp_partition_t *pa;
+        pa = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                      ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
+        assert(pa && "partition table must have an NVS partition");
+        ESP_ERROR_CHECK(esp_partition_erase_range(pa, 0, pa->size));
+        // Retry nvs_flash_init
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
 }
 
 extern "C" void app_main()
 {
     initArduino();
+
+    nvs_init();
 
     att_queue = xQueueCreate(32, 4*sizeof(float));
 

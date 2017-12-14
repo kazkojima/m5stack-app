@@ -44,20 +44,6 @@ config THROTTLE_HOVER
     help
 	Hover throttle PWM value. With pressing button B, throttle becomes to this value at constant rate.
 
-config YAW_RATIO
-    int "YAW ratio"
-    default 8
-    range 0 15
-    help
-	Ratio YAW error to YAW PWM value change in %.
-
-config YAW_FIX
-    int "YAW fixup value"
-    default 0
-    range -90 90
-    help
-	YAW fixup degree to heading differnce of M5.
-
 choice
     prompt "How to display channel values"
     default DISPLAY_TYPE_BAR

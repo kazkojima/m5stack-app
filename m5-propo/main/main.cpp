@@ -58,8 +58,8 @@ static void WiFiEvent(WiFiEvent_t event){
 
           // Start device display with ID of sensor
           M5.Lcd.fillRect(20, 0, 300, 16, BLACK);
-          M5.Lcd.setTextColor(GREEN ,BLACK);
-          M5.Lcd.setCursor(20,0);
+          M5.Lcd.setTextColor(GREEN, BLACK);
+          M5.Lcd.setCursor(20, 0);
           M5.Lcd.print("WiFi connected! IP address: ");
           M5.Lcd.print(WiFi.localIP());
 
@@ -75,8 +75,8 @@ static void WiFiEvent(WiFiEvent_t event){
 
           // Start device display with ID of sensor
           M5.Lcd.fillRect(20, 0, 300, 16, BLACK);
-          M5.Lcd.setTextColor(RED ,BLACK);
-          M5.Lcd.setCursor(20,0);
+          M5.Lcd.setTextColor(RED, BLACK);
+          M5.Lcd.setCursor(20, 0);
           M5.Lcd.print("WiFi lost connection");
 
          connected = false;
@@ -118,8 +118,8 @@ void setup(){
 #endif
 
     // LCD display
-    M5.Lcd.setTextColor(GREEN ,BLACK);
-    M5.Lcd.setCursor(20,0);
+    M5.Lcd.setTextColor(GREEN, BLACK);
+    M5.Lcd.setCursor(20, 0);
     M5.Lcd.printf("M5 propo");
 
     //Connect to the WiFi network
@@ -127,6 +127,7 @@ void setup(){
 }
 
 extern "C" {
+    bool trim_mode = false;
     xQueueHandle att_queue = NULL;
     void imu_task(void *arg);
 }
@@ -417,8 +418,6 @@ void loop() {
     delay(1);
 }
 
-bool config_loop = false;
-
 const char *var[] = {
     "adj_0", "adj_1", "adj_2", "adj_3", "adj_4", "adj_5", "adj_6", };
 
@@ -530,7 +529,7 @@ void loopTask(void *pvParameters)
     }
 
     if (M5.BtnA.isPressed() || M5.BtnB.isPressed() || M5.BtnC.isPressed()) {
-        config_loop = true;
+        trim_mode = true;
 
         for (int i = 0; i < N_ADJUST; i++) {
             nvs_close(storage_handle);
@@ -560,7 +559,7 @@ void loopTask(void *pvParameters)
         
     for(;;) {
         micros(); //update overflow
-        if (config_loop) {
+        if (trim_mode) {
             loop_conf();
         } else {
             loop();

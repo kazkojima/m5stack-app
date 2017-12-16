@@ -69,4 +69,16 @@ config ZHINANCHE
     help
 	If enabled, use mag for calibration only.
 
+config MAG_H_INTENSITY
+    int "Geomagnetic horizontal intensity"
+    default 296
+    help
+	Geomagnetic horizontal intensity in milli gauss.
+
+config MAG_V_INTENSITY
+    int "Geomagnetic vertical intensity"
+    default 372
+    help
+	Geomagnetic vertical intensity in milli gauss.
+
 endmenu

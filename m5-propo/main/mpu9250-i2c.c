@@ -20,7 +20,6 @@
 
 #include "MadgwickAHRS.h"
 #include <math.h>
-
 #define  ROTATION_YAW	0
 
 #define I2C_MASTER_SCL_IO               22
@@ -449,17 +448,16 @@ static void ak8963_start(void)
 #else
 #define COMPASS_MODE_ZHINANCHE 0
 #endif
-static float m5_mag_offset[3] = { -5780.0, 4020.0, -3155.0 };
 extern xQueueHandle att_queue;
 extern bool trim_mode;
+float m5_mag_offset[3] = { -5780.0, 4020.0, -3155.0 };
+#define MAG_LIM 49000.0
+float mx_raw_min = MAG_LIM, mx_raw_max = -MAG_LIM;
+float my_raw_min = MAG_LIM, my_raw_max = -MAG_LIM;
+float mz_raw_min = MAG_LIM, mz_raw_max = -MAG_LIM;
 
 void imu_task(void *arg)
 {
-    if (trim_mode) {
-        printf("Stop imu_task\n");
-        vTaskDelete(NULL);
-    }
-
     vTaskDelay(100/portTICK_PERIOD_MS);
     i2c_init();
     vTaskDelay(100/portTICK_PERIOD_MS);
@@ -483,19 +481,10 @@ void imu_task(void *arg)
         mpu9250_write(PWR_MGMT_1, 0x80);
         vTaskDelay(100 / portTICK_PERIOD_MS);
 
-#if 0
-        // Disable I2C interface
-        mpu9250_write(USER_CTRL, 0x10);
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-
-        // Enable master I2C access to AK8963
-        mpu9250_write(INT_PIN_CFG, 0x02);
-#else
         // Enable bypassing I2C access to AK8963
         mpu9250_write(INT_PIN_CFG, 0x22);
         mpu9250_write(INT_ENABLE, 0x01);
         vTaskDelay(100 / portTICK_PERIOD_MS);
-#endif
 
         // Wake up with appropriate clock
         mpu9250_write(PWR_MGMT_1, 0x03);
@@ -532,11 +521,6 @@ void imu_task(void *arg)
     float temp;
 
     while (1) {
-        if (trim_mode) {
-            printf("Stop imu_task\n");
-            vTaskDelete(NULL);
-        }
-
         int fifo_count = mpu9250_fifo_count();
         if (fifo_count == 0) {
             vTaskDelay(1 / portTICK_PERIOD_MS);
@@ -645,31 +629,54 @@ void imu_task(void *arg)
 #error "bad ROTATION_YAW value"
 #endif
             mx = ux.f; my = uy.f; mz = uz.f;
-            mx -= m5_mag_offset[0];
-            my -= m5_mag_offset[1];
-            mz -= m5_mag_offset[2];
-            if (count++ < FILTER_CONVERGE_COUNT) {
-                beta = 32.0f;
-                MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
+            if (trim_mode) {
+                if (mx < mx_raw_min)
+                    mx_raw_min = mx;
+                if (mx > mx_raw_max)
+                    mx_raw_max = mx;
+                if (my < my_raw_min)
+                    my_raw_min = my;
+                if (my > my_raw_max)
+                    my_raw_max = my;
+                if (mz < mz_raw_min)
+                    mz_raw_min = mz;
+                if (mz > mz_raw_max)
+                    mz_raw_max = mz;
+#if 0
+                printf("mx_off %f my_off %f mz_off %f\n",
+                       (mx_raw_min+mx_raw_max)/2, (my_raw_min+my_raw_max)/2,
+                       (mz_raw_min+mz_raw_max)/2);
+                mx -= (mx_raw_min+mx_raw_max)/2;
+                my -= (my_raw_min+my_raw_max)/2;
+                mz -= (mz_raw_min+mz_raw_max)/2;
+                printf("mx: %f my: %f mz: %f\n", mx, my, mz);
+#endif
             } else {
-                beta = 1.0f;
-                if (!COMPASS_MODE_ZHINANCHE)
+                mx -= m5_mag_offset[0];
+                my -= m5_mag_offset[1];
+                mz -= m5_mag_offset[2];
+                //printf("mx: %f my: %f mz: %f\n", mx, my, mz);
+                if (count++ < FILTER_CONVERGE_COUNT) {
+                    beta = 32.0f;
                     MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
+                } else {
+                    beta = 1.0f;
+                    if (!COMPASS_MODE_ZHINANCHE)
+                        MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
+                }
+                // These are linear approximations which would be enough for
+                // our purpose.
+                float att[4];
+                att[0] = -(q0*q1+q3*q2);
+                att[1] = -(q0*q2-q3*q1);
+                att[2] = (0.5-(q2*q2+q3*q3));
+                att[3] = -(q0*q3+q1*q2);
+                //printf ("roll %7.5f pitch %7.5f\n", att[0], att[1]);
+                if (xQueueSend(att_queue, &att[0], 0) != pdTRUE) {
+                    printf("fail to queue attitude\n");
+                }
             }
             //printf ("q0 %7.3f q1 %7.3f q2 %7.3f q3 %7.3f\n", q0, q1, q2, q3);
-            //printf("mx: %f my: %f mz: %f\n", mx, my, mz);
-
-            // These are linear approximations which would be enough for
-            // our purpose.
-            float att[4];
-            att[0] = -(q0*q1+q3*q2);
-            att[1] = -(q0*q2-q3*q1);
-            att[2] = (0.5-(q2*q2+q3*q3));
-            att[3] = -(q0*q3+q1*q2);
-            //printf ("roll %7.5f pitch %7.5f\n", att[0], att[1]);
-            if (xQueueSend(att_queue, &att[0], 0) != pdTRUE) {
-                printf("fail to queue attitude\n");
-            }
         }
     }
 }

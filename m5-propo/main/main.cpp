@@ -128,6 +128,11 @@ void setup(){
 
 extern "C" {
     bool trim_mode = false;
+    extern float m5_mag_offset[3];
+    extern float mx_raw_min, mx_raw_max;
+    extern float my_raw_min, my_raw_max;
+    extern float mz_raw_min, mz_raw_max;
+
     xQueueHandle att_queue = NULL;
     void imu_task(void *arg);
 }
@@ -220,7 +225,7 @@ enum adjust {
     CH4_OFFSET,
     YAW_SENSE,
     YAW_FIX,
-    EXT_ADJUST,
+    MAG_CALIB,
     ADJUST_NVS
 };
 #define N_ADJUST 8
@@ -243,7 +248,7 @@ const char *adjust_string[N_ADJUST] = {
     "Yaw offset",
     "Yaw sensitivity",
     "Yaw misalign",
-    "Reserved",
+    "Mag calibration",
     "Load/Save",
 };
     
@@ -418,6 +423,35 @@ void loop() {
     delay(1);
 }
 
+int mag_calib_state = 0;
+#define MAG_HOR CONFIG_MAG_H_INTENSITY
+#define MAG_VER CONFIG_MAG_V_INTENSITY
+// AK8963 range +- 4900uT
+#define MAG_LIM 49000
+
+bool guess_mag_offset(void)
+{
+    bool changed = false;
+    if (mag_calib_state == 0
+        && mx_raw_max - mx_raw_min > 2 * MAG_HOR * 0.8
+        && my_raw_max - my_raw_min > 2 * MAG_HOR * 0.8) {
+        //Serial.printf("mx_off %d\n\r", (int)(mx_raw_min+mx_raw_max)/2);
+        //Serial.printf("my_off %d\n\r", (int)(my_raw_min+my_raw_max)/2);
+        m5_mag_offset[0] = (mx_raw_min + mx_raw_max)/2;
+        m5_mag_offset[1] = (my_raw_min + my_raw_max)/2;
+        mag_calib_state = 1;
+        changed = true;
+    }
+    if (mag_calib_state == 1
+        && mz_raw_max - mz_raw_min > 2 * MAG_VER * 0.8) {
+        //Serial.printf("mz_off\n\r", (int)(mz_raw_min+mz_raw_max)/2);
+        m5_mag_offset[2] = (mz_raw_min + mz_raw_max)/2;
+        mag_calib_state = 2;
+        changed = true;
+    }
+    return changed;
+}
+
 const char *var[] = {
     "adj_0", "adj_1", "adj_2", "adj_3", "adj_4", "adj_5", "adj_6", };
 
@@ -428,7 +462,7 @@ void loop_conf() {
         adjust_index = (adjust_index + 1) % N_ADJUST;
         update = true;
     }
-    if (adjust_index != ADJUST_NVS) {
+    if (adjust_index != ADJUST_NVS && adjust_index != MAG_CALIB) {
         if (M5.BtnC.wasPressed()) {
             if (adjust[adjust_index] < adjust_range[adjust_index].max) {
                 adjust[adjust_index]++;
@@ -441,6 +475,15 @@ void loop_conf() {
                 update = true;
             }
         }
+    } else if (adjust_index == MAG_CALIB) {
+        if (M5.BtnA.wasPressed()) {
+            // restert calib
+            mx_raw_min = my_raw_min = mz_raw_min = MAG_LIM;
+            mx_raw_max = my_raw_max = mz_raw_max = -MAG_LIM;
+            mag_calib_state = 0;
+            update = true;
+        }
+        update = (update || guess_mag_offset());
     } else {
         nvs_handle storage_handle;
         esp_err_t err;
@@ -451,7 +494,7 @@ void loop_conf() {
                 Serial.println("NVS can't be opened");
             } else {
                 int32_t v;
-                for (int i = 0; i < N_ADJUST - 1; i++) {
+                for (int i = 0; i < N_ADJUST - 2; i++) {
                     err = nvs_get_i32(storage_handle, var[i], &v);
                     if (err != ESP_OK) v = 0;
                     adjust[i] = v;
@@ -467,9 +510,26 @@ void loop_conf() {
                 Serial.println("NVS can't be opened");
             } else {
                 int32_t v;
-                for (int i = 0; i < N_ADJUST - 1; i++) {
+                for (int i = 0; i < N_ADJUST - 2; i++) {
                     v = adjust[i];
                     err = nvs_set_i32(storage_handle, var[i], v);
+                    if (err != ESP_OK) {
+                        nvs_commit(storage_handle);
+                    }
+                }
+                if (mag_calib_state == 2) {
+                    v = (int32_t)m5_mag_offset[0];
+                    err = nvs_set_i32(storage_handle, "mx_off", v);
+                    if (err != ESP_OK) {
+                        nvs_commit(storage_handle);
+                    }
+                    v = (int32_t)m5_mag_offset[1];
+                    err = nvs_set_i32(storage_handle, "my_off", v);
+                    if (err != ESP_OK) {
+                        nvs_commit(storage_handle);
+                    }
+                    v = (int32_t)m5_mag_offset[2];
+                    err = nvs_set_i32(storage_handle, "mz_off", v);
                     if (err != ESP_OK) {
                         nvs_commit(storage_handle);
                     }
@@ -496,8 +556,16 @@ void loop_conf() {
                 M5.Lcd.setTextColor(TFT_DARKGREY, BLACK);
             }
             M5.Lcd.setCursor(140, 28+i*24);
-            if (i != ADJUST_NVS) {
+            if (i != ADJUST_NVS && i != MAG_CALIB) {
                 M5.Lcd.printf("%4d", adjust[i]);
+            } else if (i == MAG_CALIB) {
+                if (mag_calib_state == 0) {
+                    M5.Lcd.printf("Rotate horizontally");
+                } else if (mag_calib_state == 1) {
+                    M5.Lcd.printf("Turn upside down");
+                } else {
+                    M5.Lcd.printf("Completed!");
+                }
             } else {
                 M5.Lcd.printf("A:Load C:Save");
             }
@@ -588,6 +656,27 @@ extern "C" void app_main()
     initArduino();
 
     nvs_init();
+
+    nvs_handle storage_handle;
+    esp_err_t err;
+    err = nvs_open("storage", NVS_READWRITE, &storage_handle);
+    if (err == ESP_OK) {
+        int32_t v;
+        err = nvs_get_i32(storage_handle, "mx_off", &v);
+        if (err == ESP_OK) {
+            m5_mag_offset[0] = (float)v;
+        }
+        err = nvs_get_i32(storage_handle, "my_off", &v);
+        if (err == ESP_OK) {
+            m5_mag_offset[1] = (float)v;
+        }
+        err = nvs_get_i32(storage_handle, "mz_off", &v);
+        if (err == ESP_OK) {
+            m5_mag_offset[2] = (float)v;
+        }
+        printf("m5_mag_offset loaded %4.0f %4.0f %4.0f\n",
+               m5_mag_offset[0], m5_mag_offset[1], m5_mag_offset[2]);
+    }
 
     att_queue = xQueueCreate(32, 4*sizeof(float));
 

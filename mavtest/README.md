@@ -23,4 +23,4 @@ COMPONENT_ADD_INCLUDEDIRS := v2.0 v2.0/common
 EOS
 ```
 
-The tcp telemetry port of ArduCopter can be assigned with its command line argument like as "-C tcp:192.168.11.1:5900".  These address(APM_SERVER_ADDRESS) and port(TELEMETORY_PORT) of telemetry can be configured with "make menuconf".
+The tcp telemetry port of ArduCopter can be assigned with its command line argument like as "-C tcp:192.168.11.1:5900".  These address(APM_SERVER_ADDRESS) and port(TELEMETORY_PORT) of telemetry can be configured with "make menuconfig".

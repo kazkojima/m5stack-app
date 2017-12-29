@@ -450,6 +450,7 @@ static void ak8963_start(void)
 #endif
 extern xQueueHandle att_queue;
 extern bool trim_mode;
+extern bool stop_imu;
 float m5_mag_offset[3] = { -5780.0, 4020.0, -3155.0 };
 #define MAG_LIM 49000.0
 float mx_raw_min = MAG_LIM, mx_raw_max = -MAG_LIM;
@@ -458,6 +459,11 @@ float mz_raw_min = MAG_LIM, mz_raw_max = -MAG_LIM;
 
 void imu_task(void *arg)
 {
+    if (stop_imu) {
+        printf("Stop imu_task\n");
+        vTaskDelete(NULL);
+    }
+
     vTaskDelay(100/portTICK_PERIOD_MS);
     i2c_init();
     vTaskDelay(100/portTICK_PERIOD_MS);
@@ -521,6 +527,11 @@ void imu_task(void *arg)
     float temp;
 
     while (1) {
+        if (stop_imu) {
+            printf("Stop imu_task\n");
+            vTaskDelete(NULL);
+        }
+
         int fifo_count = mpu9250_fifo_count();
         if (fifo_count == 0) {
             vTaskDelay(1 / portTICK_PERIOD_MS);

@@ -128,6 +128,7 @@ void setup(){
 
 extern "C" {
     bool trim_mode = false;
+    bool stop_imu = false;
     extern float m5_mag_offset[3];
     extern float mx_raw_min, mx_raw_max;
     extern float my_raw_min, my_raw_max;
@@ -135,6 +136,9 @@ extern "C" {
 
     xQueueHandle att_queue = NULL;
     void imu_task(void *arg);
+
+    xQueueHandle sbus_queue = NULL;
+    void sbus_task(void *);
 }
 
 boolean telemetry_yaw_ok = false;
@@ -225,10 +229,11 @@ enum adjust {
     CH4_OFFSET,
     YAW_SENSE,
     YAW_FIX,
+    SBUS_MODE,
     MAG_CALIB,
     ADJUST_NVS
 };
-#define N_ADJUST 8
+#define N_ADJUST 9
 int adjust_index;
 int16_t adjust[N_ADJUST];
 const struct { int16_t min; int16_t max; } adjust_range[N_ADJUST] = { 
@@ -238,6 +243,7 @@ const struct { int16_t min; int16_t max; } adjust_range[N_ADJUST] = {
     { -200, +200 },
     { 0, 15 },
     { -90, 90 },
+    { 0, 1 },
     { 0, 0 },
     { 0, 0 },
 };
@@ -248,6 +254,7 @@ const char *adjust_string[N_ADJUST] = {
     "Yaw offset",
     "Yaw sensitivity",
     "Yaw misalign",
+    "SBUS mode",
     "Mag calibration",
     "Load/Save",
 };
@@ -423,6 +430,75 @@ void loop() {
     delay(1);
 }
 
+static inline int sat1k(int x)
+{
+    if (x < 0)
+        return 0;
+    else if (x > 1000)
+        return 1000;
+    return x;
+}
+
+// Alternative loop for sbus-udp converter mode
+void loop_sbus()
+{
+    static bool thr_activate = false;
+    if (M5.BtnC.wasPressed()) {
+        thr_activate = true;
+    }
+    if (M5.BtnA.wasPressed()) {
+        thr_activate = false;
+    }
+    
+    uint16_t pwm[8];
+    if (xQueueReceive(sbus_queue, (uint8_t *)pwm, portMAX_DELAY) == pdTRUE) {
+        if ((count % 10) == 0) {
+            uint8_t v;
+            // Display roll bar
+            v = (uint8_t)(sat1k(pwm[0]-1000)/1000.0*bw);
+            M5.Lcd.fillRect(xo, 40, v, 16, CYAN);
+            M5.Lcd.fillRect(xo+v, 40, bw-v, 16, TFT_DARKGREY);
+            // Display pitch bar
+            v = (uint8_t)(sat1k(pwm[1]-1000)/1000.0*bw);
+            M5.Lcd.fillRect(100, yo, 24, bw-v, TFT_DARKGREY);
+            M5.Lcd.fillRect(100, yo+bw-v, 24, v, GREEN);
+            // Display throttle bar
+            v = (uint8_t)(sat1k(pwm[2]-1000)/1000.0*bw);
+            M5.Lcd.fillRect(280, yo, 24, bw-v, TFT_DARKGREY);
+            if (thr_activate) {
+                M5.Lcd.fillRect(280, yo+bw-v, 24, v, ORANGE);
+            } else {
+                M5.Lcd.fillRect(280, yo+bw-v, 24, v, TFT_LIGHTGREY);
+                pwm[2] = 1100;
+            }
+            // Display yaw bar
+            v = (uint8_t)(sat1k(pwm[3]-1000)/1000.0*bw);
+            M5.Lcd.fillRect(xo, 224, v, 16, YELLOW);
+            M5.Lcd.fillRect(xo+v, 224, bw-v, 16, TFT_DARKGREY);
+       }
+
+        if (connected) {
+            struct rcpkt pkt;
+            memset(&pkt, 0, sizeof(pkt));
+            pkt.version = 2;
+            pkt.sequence = rcpkt_count++;
+            pkt.timestamp_us = ((uint64_t)1000) * millis();
+            for(int i=0; i<8; i++)
+	        pkt.pwms[i] = pwm[i];
+            udp.beginPacket(udpAddress, udpPort);
+            udp.write((const uint8_t *)&pkt, sizeof(pkt));
+            udp.endPacket();
+        }
+
+        count++;
+    }
+
+    M5.update();
+    delay(1);
+}
+
+// Guess compass offset values
+
 int mag_calib_state = 0;
 #define MAG_HOR CONFIG_MAG_H_INTENSITY
 #define MAG_VER CONFIG_MAG_V_INTENSITY
@@ -594,6 +670,12 @@ void loopTask(void *pvParameters)
             if (err != ESP_OK) v = 0;
             adjust[i] = v;
         }
+        nvs_close(storage_handle);
+    }
+
+    bool sbus_mode = adjust[SBUS_MODE] ? true : false;
+    if (sbus_mode) {
+        stop_imu = true;
     }
 
     if (M5.BtnA.isPressed() || M5.BtnB.isPressed() || M5.BtnC.isPressed()) {
@@ -629,6 +711,8 @@ void loopTask(void *pvParameters)
         micros(); //update overflow
         if (trim_mode) {
             loop_conf();
+        } else if (sbus_mode) {
+            loop_sbus();
         } else {
             loop();
         }
@@ -676,10 +760,13 @@ extern "C" void app_main()
         }
         printf("m5_mag_offset loaded %4.0f %4.0f %4.0f\n",
                m5_mag_offset[0], m5_mag_offset[1], m5_mag_offset[2]);
+        nvs_close(storage_handle);
     }
 
     att_queue = xQueueCreate(32, 4*sizeof(float));
+    sbus_queue = xQueueCreate(4, 8*sizeof(uint16_t));
 
     xTaskCreatePinnedToCore(loopTask, "loopTask", 8192, NULL, 1, NULL, ARDUINO_RUNNING_CORE);
     xTaskCreate(imu_task, "imu_task", 2048, NULL, 1, NULL);
+    xTaskCreate(sbus_task, "sbus_task", 2048, NULL, 1, NULL);
 }

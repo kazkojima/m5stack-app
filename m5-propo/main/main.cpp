@@ -8,6 +8,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 
+#if CONFIG_ENABLE_TELEMETORY
 #undef F
 #include <mavlink_types.h>
 #define MAVLINK_USE_CONVENIENCE_FUNCTIONS 1
@@ -15,6 +16,7 @@
 static void send_tcp_bytes(mavlink_channel_t chan, const uint8_t *buf, uint16_t len);
 extern mavlink_system_t mavlink_system;
 #include <mavlink.h>
+#endif
 
 #if CONFIG_FREERTOS_UNICORE
 #define ARDUINO_RUNNING_CORE 0
@@ -28,8 +30,10 @@ const char *networkPswd = CONFIG_SSID_PASSWORD;
 //APM server IP address
 const char *udpAddress = CONFIG_APM_SERVER_ADDRESS;
 const int udpPort = CONFIG_UDP_PORT;
+#if CONFIG_ENABLE_TELEMETORY
 const char *tcpAddress = CONFIG_APM_SERVER_ADDRESS;
 const int tcpPort = CONFIG_TELEMETORY_PORT;
+#endif
 
 //Are we currently connected?
 boolean connected = false;
@@ -38,8 +42,10 @@ boolean telemetry_connected = false;
 //The udp library class
 WiFiUDP udp;
 
+#if CONFIG_ENABLE_TELEMETORY
 //TCP telemetory client
 WiFiClient client;
+#endif
 
 struct __attribute__((packed)) rcpkt {
     uint32_t version;
@@ -67,8 +73,10 @@ static void WiFiEvent(WiFiEvent_t event){
           //This initializes the transfer buffer
           udp.begin(WiFi.localIP(),udpPort);
           connected = true;
+#if CONFIG_ENABLE_TELEMETORY
           if(client.connect(tcpAddress, tcpPort))
               telemetry_connected = true;
+#endif
           break;
       case SYSTEM_EVENT_STA_DISCONNECTED:
           Serial.println("WiFi lost connection");
@@ -141,6 +149,7 @@ extern "C" {
     void sbus_task(void *);
 }
 
+#if CONFIG_ENABLE_TELEMETORY
 boolean telemetry_yaw_ok = false;
 float telemetry_yaw;
 
@@ -197,6 +206,7 @@ void check_telemetry(void)
             break;
     }
 }
+#endif
 
 static uint16_t pwm_sat(uint16_t pwm)
 {
@@ -213,6 +223,9 @@ const float throttle_hover = (CONFIG_THROTTLE_HOVER - 1100) / 800.0;
 float throttle = 0.0; // % of throttle
 uint16_t rcpkt_count;
 int count;
+int emg_count;
+int mode_count;
+uint16_t pwm_mode = 1100; // Maybe LAND
 
 #if CONFIG_DISPLAY_TYPE_BAR
 const uint8_t xo = 28;
@@ -275,14 +288,38 @@ static inline float curve(float x)
     return x;
 }
 
+static float yaw_filter(float sx, float sy)
+{
+    static float px, py, pd;
+    static bool first = true;
+    if (first) {
+        px = sx;
+        py = sy;
+        pd = 0;
+        first = false;
+        return 0;
+    }
+    float d = -(sx*py-sy*px);
+    px = sx;
+    py = sy;
+    float v = d + pd;
+    pd = d;
+    Serial.println(String(d)+" "+String(pd));
+    return v;
+}
+
 // The loop routine runs over and over again forever
 void loop() {
+    static bool thr_stop = false;
 
+#if CONFIG_ENABLE_TELEMETORY
     check_telemetry();
+#endif
 
     float att[4];
     if (xQueueReceive(att_queue, &att[0], 0) == pdTRUE) {
         float yawerr = 0;
+#if CONFIG_ENABLE_TELEMETORY
         if (telemetry_yaw_ok) {
             float yawfix = adjust[YAW_FIX] / 57.29578f;
             float tel_n = cosf(telemetry_yaw - yawfix);
@@ -298,7 +335,11 @@ void loop() {
             yawerr *= adjust[YAW_SENSE] / 100.0f;
             //Serial.println("E "+String(yawerr));
         }
-   
+#else
+        float r = sqrtf(att[2]*att[2]+ att[3]*att[3]);
+        yawerr = (adjust[YAW_SENSE] / 10.0f)*yaw_filter(att[2]/r, att[3]/r);
+#endif
+
         if ((count % 10) == 0) {
 #if CONFIG_DISPLAY_TYPE_BAR
             uint8_t v;
@@ -313,11 +354,25 @@ void loop() {
             // Display throttle bar
             v = (uint8_t)(throttle*bw);
             M5.Lcd.fillRect(280, yo, 24, bw-v, TFT_DARKGREY);
-            M5.Lcd.fillRect(280, yo+bw-v, 24, v, ORANGE);
+            M5.Lcd.fillRect(280, yo+bw-v, 24, v,
+                            (thr_stop ? TFT_LIGHTGREY : ORANGE));
             // Display yaw bar. Test only.
             v = (uint8_t)((yawerr+0.5)*bw);
             M5.Lcd.fillRect(xo, 224, v, 16, YELLOW);
             M5.Lcd.fillRect(xo+v, 224, bw-v, 16, TFT_DARKGREY);
+            // Display mode string.
+            M5.Lcd.setCursor(240,20);
+            M5.Lcd.setTextColor(WHITE, BLACK);
+            if (thr_stop) {
+                M5.Lcd.setTextColor(RED, BLACK);
+                M5.Lcd.printf("[STOP]  ");
+            } else if (pwm_mode == 1100) {
+                M5.Lcd.setTextColor(WHITE, BLACK);
+                M5.Lcd.printf("[LAND]  ");
+            } else {
+                M5.Lcd.setTextColor(WHITE, BLACK);
+                M5.Lcd.printf("[LOITER]");
+            }
 #elif CONFIG_DISPLAY_TYPE_MARK
             int32_t cx, cy;
             cx = (int32_t)(240*att[0]);
@@ -355,7 +410,8 @@ void loop() {
             // Display throttle bar
             uint8_t h = (uint8_t)(throttle*240);
             M5.Lcd.fillRect(320-16, 0, 15, 240-h, BLACK);
-            M5.Lcd.fillRect(320-16, 240-h, 15, 240, ORANGE);
+            M5.Lcd.fillRect(320-16, 240-h, 15, 240,
+                            (thr_stop ? TFT_LIGHTGREY : ORANGE));
 #endif
         }
 
@@ -368,14 +424,38 @@ void loop() {
                               + adjust[CH4_OFFSET]);
 #if CONFIG_THROTTLE_BUTTON
         if(M5.BtnA.isPressed()) {
+            if (M5.BtnB.isPressed()) {
+                ++emg_count;
+            } else {
+                emg_count = 0;
+            }
             throttle -= 0.002;
             if (throttle < 0)
                 throttle = 0;
+        } else {
+            emg_count = 0;
+        }
+        if (emg_count > 20) {
+            thr_stop = true;
+            throttle = 0;
         }
         if (M5.BtnC.isPressed()) {
+            if (M5.BtnB.isPressed()) {
+                thr_stop = false;
+            }
+            if (M5.BtnA.isPressed()) {
+                ++mode_count;
+            } else {
+                mode_count = 0;
+            }
             throttle += 0.002;
             if (throttle > 100.0)
                 throttle = 100.0;
+        }
+        if (mode_count > 50) {
+            // toggle flight mode
+            pwm_mode = (pwm_mode == 1100) ? 1900 : 1100;
+            mode_count = 0;
         }
         if (M5.BtnB.isPressed()) {
             if (throttle < throttle_hover) {
@@ -413,16 +493,20 @@ void loop() {
             pkt.pwms[3] = pwm_yaw;
             for(int i=4; i<8; i++)
                 pkt.pwms[i] = 1500;
+            pkt.pwms[4] = pwm_mode;
+            pkt.pwms[6] = (thr_stop == true) ? 2000 : 1000;
+
             udp.beginPacket(udpAddress,udpPort);
             udp.write((const uint8_t *)&pkt, sizeof(pkt));
             udp.endPacket();
         }
 
+#if CONFIG_ENABLE_TELEMETORY
         if (!telemetry_connected && (count % 1000) == 0) {
           if(client.connect(tcpAddress, tcpPort))
               telemetry_connected = true;
         }
-
+#endif
         count++;
     }
 
@@ -443,11 +527,20 @@ static inline int sat1k(int x)
 void loop_sbus()
 {
     static bool thr_activate = false;
+    static bool thr_stop = false;
+
     if (M5.BtnC.wasPressed()) {
-        thr_activate = true;
+        if (!thr_stop) {
+            thr_activate = true;
+        }
     }
     if (M5.BtnA.wasPressed()) {
         thr_activate = false;
+        thr_stop = true;
+    }
+    if (M5.BtnB.wasPressed()) {
+        thr_activate = false;
+        thr_stop = false;
     }
     
     uint16_t pwm[8];
@@ -469,13 +562,21 @@ void loop_sbus()
                 M5.Lcd.fillRect(280, yo+bw-v, 24, v, ORANGE);
             } else {
                 M5.Lcd.fillRect(280, yo+bw-v, 24, v, TFT_LIGHTGREY);
-                pwm[2] = 1100;
             }
             // Display yaw bar
             v = (uint8_t)(sat1k(pwm[3]-1000)/1000.0*bw);
             M5.Lcd.fillRect(xo, 224, v, 16, YELLOW);
             M5.Lcd.fillRect(xo+v, 224, bw-v, 16, TFT_DARKGREY);
-       }
+        }
+
+        if (thr_activate == false) {
+            pwm[2] = 1100;
+        }
+        if (thr_stop == true) {
+            pwm[6] = 2000;
+        } else {
+            pwm[6] = 1000;
+        }
 
         if (connected) {
             struct rcpkt pkt;

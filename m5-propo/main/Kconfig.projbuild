@@ -24,9 +24,16 @@ config UDP_PORT
     help
         UDP port used for both Wi-Fi and ether
 
+config ENABLE_TELEMETORY
+    bool "Enable telemetory"
+    default "n"
+    help
+        If enabled, connect to host's telemetory port via TCP
+
 config TELEMETORY_PORT
     int "telemetory port"
     default 5900
+    depends on ENABLE_TELEMETORY
     help
         TCP port which host uses for telemetry
 

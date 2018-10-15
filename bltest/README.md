@@ -64,5 +64,4 @@ The arduino loop is executed as a freertos task pinned to one core of ESP32. Thu
 
 btstack defines app_main() function which calls btstack_main() in hid_host_demo.c. This btstack_main() calls m5_arduino_main() function at its end and m5_arduino_main() in main.cpp starts the arduino loop task.
 
-hid_host_demo.c is the almost same with the original one of btstack/port/esp32/example/hid_host_demo but the above m5_arduino_main() call and freertos queue definitions used so that arduino/non-arduino tasks can communicate. I add a very simple handling for mouse data and a part of btstack/port/esp32/example/gap_inquery example to scan BT, too. Currently, the latter picks up the first HID client found. Although clearly wrong when there exists multiple candidates, I want to avoid hard coding of BT address of my keypad :-)
-
+hid_host_demo.c is the almost same with the original one of btstack/port/esp32/example/hid_host_demo but has the above m5_arduino_main() call and freertos queue definitions used so that arduino/non-arduino tasks can communicate. I add a very simple handling for mouse data and a part of btstack/port/esp32/example/gap_inquery example to scan BT, too. Currently, the latter picks up the first HID client found. Although clearly wrong when there exists multiple candidates, it removes the hard coding of BT address.

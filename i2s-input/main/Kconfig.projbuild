@@ -1,0 +1,79 @@
+menu "I2S input Configuration"
+
+config SSID
+    string "WIFI access point name (SSID)"
+    default "ssid_of_your_ap"
+    help
+        Enter the name of the WIFI access point
+
+config SSID_PASSWORD
+    string "WIFI password"
+    default "password_of_your_ap"
+    help
+        Enter ssid password
+
+config UDP_ADDRESS
+    string "IPv4 address of server"
+    default "192.168.11.1"
+    help
+        IP address of the server
+
+config UDP_PORT
+    int "UDP port"
+    default 5990
+    help
+        UDP port used for both Wi-Fi and ether
+
+config I2S_BCK_GPIO
+    int "BCK gpio num"
+    range 1 26
+    default 17
+    help
+        GPIO pin for I2S BCK signal
+
+config I2S_DATAIN_GPIO
+    int "DATA_IN gpio num"
+    range 1 26
+    default 16
+    help
+        GPIO pin for I2S DATA IN signal
+
+config I2S_WS_GPIO
+    int "WS gpio num"
+    range 1 26
+    default 5
+    help
+        GPIO pin for I2S WS signal
+
+config I2S_NUM
+    int "I2S "
+    range 0 1
+    default 0
+    help
+        I2S unit number (default 0)
+
+config I2S_SAMPLE_RATE
+    int "sample rate"
+    default 8000
+    help
+        I2S sample rate (default 8000)
+
+config I2S_STEREO
+    bool "STEREO"
+    default false
+    help
+	Enable LEFT and RIGHT input both
+
+config I2S_MCLK_GPIO1
+    bool "MCLK to GPIO 1"
+    default false
+    help
+	Enable I2S master clock output at GPIO 1 (CLK_OUT3)
+
+config I2S_DISPLAY_FFT
+    bool "DISPLAY FFT result"
+    default true
+    help
+	If set, display FFT result
+
+endmenu

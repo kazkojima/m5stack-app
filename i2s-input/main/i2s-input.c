@@ -119,10 +119,18 @@ void i2s_task(void *arg)
         float *tp;
         if (i == 0)
             tp = ap;
+#if CONFIG_I2S_STEREO
+        for (int j = 0; j < I2SBUFLEN; j += 2, i++) {
+            // Use the mean value of both channels
+            *tp++ =  ((float) (buf[j] >> 8) + (float) (buf[j+1] >> 8))/(1<<24);
+            *tp++ = 0;
+        }
+#else
         for (int j = 0; j < I2SBUFLEN; j++, i++) {
             *tp++ =  ((float) (buf[j] >> 8))/(1<<23);
             *tp++ = 0;
         }
+#endif
         if (i == NMAX/2) {
             cdft (NMAX, 1, ap, cfdt_ip, cfdt_w);
             // Gen power spectrum

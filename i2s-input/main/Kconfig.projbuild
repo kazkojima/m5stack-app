@@ -58,11 +58,19 @@ config I2S_SAMPLE_RATE
     help
         I2S sample rate (default 8000)
 
-config I2S_STEREO
-    bool "STEREO"
-    default false
+choice I2S_CHANNEL_FORMAT
+    prompt "channel format"
+    default I2S_ONLY_RIGHT
     help
-	Enable LEFT and RIGHT input both
+        I2S channel formats. Select from STEREO/ONLY_RIGHT/ONLY_LEFT.
+
+config I2S_STEREO
+    bool "LEFT and RIGHT input both"
+config I2S_ONLY_RIGHT
+    bool "RIGHT input only"
+config I2S_ONLY_LEFT
+    bool "LEFT input only"
+endchoice
 
 config I2S_MCLK_GPIO1
     bool "MCLK to GPIO 1"

@@ -37,7 +37,9 @@ static void i2s_init(void)
          .bits_per_sample = I2S_BITS_PER_SAMPLE_24BIT,
 #if CONFIG_I2S_STEREO
          .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-#else
+#elif CONFIG_I2S_ONLY_LEFT
+         .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+#else // CONFIG_I2S_ONLY_RIGHT
          .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT,
 #endif
          .communication_format = I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB,

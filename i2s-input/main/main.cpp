@@ -151,7 +151,7 @@ void loop() {
     count++;
 
 #if CONFIG_I2S_DISPLAY_FFT
-    M5.Lcd.fillRect(20, 40, 280, 180, TFT_NAVY);
+    M5.Lcd.fillRect(20, 40, 280, 190, TFT_NAVY);
 
     for (int i = 0; i < 256; i++) {
         int16_t ix = 30 + i;
@@ -160,6 +160,7 @@ void loop() {
             iy = 40;
         if (iy > 220)
             iy = 220;
+
         M5.Lcd.drawPixel(ix, iy, GREEN);
     }
 #endif

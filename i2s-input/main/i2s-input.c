@@ -83,8 +83,10 @@ void i2s_task(void *arg)
 {
     esp_err_t ret;
 
+#if CONFIG_I2S_DISPLAY_FFT
     // Prepare cfdt_w table.
     makewt (NMAX >> 2, cfdt_ip, cfdt_w);
+#endif
 
     while (sockfd < 0) {
         vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -98,9 +100,11 @@ void i2s_task(void *arg)
     gpio_iomux_out(1, FUNC_U0TXD_CLK_OUT3, false);
 #endif
 
+#if CONFIG_I2S_DISPLAY_FFT
     float *ap = (float *)(void *) fbuf;
     int i = 0;
- 
+#endif
+
     uint32_t buf[I2SBUFLEN*sizeof(uint32_t)];
     while (1) {
         size_t size = I2SBUFLEN*sizeof(uint32_t);

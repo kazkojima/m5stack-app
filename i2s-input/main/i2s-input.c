@@ -21,7 +21,7 @@
 #include "lwip/sys.h"
 #include "lwip/netdb.h"
 
-#define I2SNDMABUF		4
+#define I2SNDMABUF		(CONFIG_I2S_DMA_BUF_NUM)
 #define I2SBUFLEN		(32*2)
 
 #define SAMPLE_RATE     (CONFIG_I2S_SAMPLE_RATE)

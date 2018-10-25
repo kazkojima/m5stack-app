@@ -72,6 +72,13 @@ config I2S_ONLY_LEFT
     bool "LEFT input only"
 endchoice
 
+config I2S_DMA_BUF_NUM
+    int "number of DMA buffer"
+    range 4 16
+    default 8
+    help
+        Specify how many DMA buffers to be used
+
 config I2S_MCLK_GPIO1
     bool "MCLK to GPIO 1"
     default false

@@ -1,0 +1,45 @@
+menu "M5 rotor identifier Configuration"
+
+config SSID
+    string "WIFI access point name (SSID)"
+    default "your_ap_ssid"
+    help
+        Enter the name of the WIFI access point
+
+config SSID_PASSWORD
+    string "WIFI password"
+    default "your_ap_password"
+    help
+        Enter ssid password
+
+config SERVER_ADDRESS
+    string "IPv4 address of server"
+    default "192.168.11.1"
+    help
+        IP address of the server, normaly same with AP_ADDRESS
+
+config TCP_PORT
+    int "TCP port"
+    default 6860
+    help
+        TCP port used for sending result
+
+config ZHINANCHE
+    bool "Enable ZHINANCHE mode"
+    default "n"
+    help
+	If enabled, use mag for calibration only.
+
+config MAG_H_INTENSITY
+    int "Geomagnetic horizontal intensity"
+    default 296
+    help
+	Geomagnetic horizontal intensity in milli gauss.
+
+config MAG_V_INTENSITY
+    int "Geomagnetic vertical intensity"
+    default 372
+    help
+	Geomagnetic vertical intensity in milli gauss.
+
+endmenu

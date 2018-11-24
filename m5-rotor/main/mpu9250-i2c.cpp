@@ -576,7 +576,8 @@ void imu_task(void *arg)
 #error "bad ROTATION_YAW value"
 #endif
             //ax = ux.f; ay = uy.f; az = uz.f;
-            ay = ux.f; ax = uy.f; az = uz.f;
+            // Change NED to normal right-hand frame.
+            ay = -ux.f; ax = -uy.f; az = uz.f;
 
             union { float f; uint8_t bytes[sizeof(float)];} ut;
             ut.f = ((float)be16_val(rx.d, 3)) * TEMP_SCALE + TEMP_OFFSET;
@@ -602,6 +603,7 @@ void imu_task(void *arg)
 #error "bad ROTATION_YAW value"
 #endif
             //gx = ux.f; gy = uy.f; gz = uz.f;
+            // Change NED to normal right-hand frame.
             gy = ux.f; gx = uy.f; gz = -uz.f;
 
             if ((count++ % 10) == 0) {
@@ -675,6 +677,7 @@ void imu_task(void *arg)
 #else
 #error "bad ROTATION_YAW value"
 #endif
+            // Use NED here so to display usual compass values
             mx = ux.f; my = uy.f; mz = uz.f;
             if (trim_mode) {
                 if (mx < mx_raw_min)
@@ -712,12 +715,14 @@ void imu_task(void *arg)
                     ;
                 else if (count < FILTER_CONVERGE_COUNT) {
                     RI.SetGain(4.0f);
-                    RI.UpdateIMU(gx, gy, gz, ax, ay, az, mx, my, mz,
+                    // Use normal frame for MAG here
+                    RI.UpdateIMU(gx, gy, gz, ax, ay, az, my, mx, -mz,
                                  c, pi, pj, pk);
                 } else {
                     RI.SetGain(filter_gain);
+                    // Use normal frame for MAG here
                     if (!COMPASS_MODE_ZHINANCHE)
-                        RI.UpdateIMU(gx, gy, gz, ax, ay, az, mx, my, mz,
+                        RI.UpdateIMU(gx, gy, gz, ax, ay, az, my, mx, -mz,
                                      c, pi, pj, pk);
                 }
 #endif

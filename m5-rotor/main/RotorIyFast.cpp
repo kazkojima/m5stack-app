@@ -25,25 +25,25 @@
 
 RotorIy::RotorIy ()
 {
-  m_Ix = m_Iy = m_Iz = 0.0;
-  m_S0 = 1.0;
-  m_Si = m_Sj = m_Sk = 0.0;
+  m_Ix = m_Iy = m_Iz = 0.0f;
+  m_S0 = 1.0f;
+  m_Si = m_Sj = m_Sk = 0.0f;
 #if ENABLE_3RD_ORDER_INTERPOLATION
-  m_omega0x = m_omega0y = m_omega0z = 0.0;
-  m_omega1x = m_omega1y = m_omega1z = 0.0;
+  m_omega0x = m_omega0y = m_omega0z = 0.0f;
+  m_omega1x = m_omega1y = m_omega1z = 0.0f;
 #endif
-  m_gain = 0.01;
+  m_gain = 0.01f;
 }
 
 RotorIy::RotorIy (float gain, float dt, float epsilon):
   m_gain(gain), m_dt(dt), m_epsilon(epsilon)
 {
-  m_S0 = 1.0;
-  m_Si = m_Sj = m_Sk = 0.0;
-  m_Ix = m_Iy = m_Iz = 0.0;
+  m_S0 = 1.0f;
+  m_Si = m_Sj = m_Sk = 0.0f;
+  m_Ix = m_Iy = m_Iz = 0.0f;
 #if ENABLE_3RD_ORDER_INTERPOLATION
-  m_omega0x = m_omega0y = m_omega0z = 0.0;
-  m_omega1x = m_omega1y = m_omega1z = 0.0;
+  m_omega0x = m_omega0y = m_omega0z = 0.0f;
+  m_omega1x = m_omega1y = m_omega1z = 0.0f;
 #endif
 }
 
@@ -88,11 +88,11 @@ Atan2 (float y, float x)
   float a = absmin/absmax;
   float s = a*a;
   // 7th order Taylor approximation
-  float r = ((-0.0464964749*s + 0.15931422)*s - 0.327622764)*s*a + a;
+  float r = ((-0.0464964749f*s + 0.15931422f)*s - 0.327622764f)*s*a + a;
   if (absy > absx)
-    r = 1.57079637 - r;
+    r = 1.57079637f - r;
   if (x < 0)
-    r = 3.14159274 - r;
+    r = 3.14159274f - r;
   if (y < 0)
     r = -r;
   return r;
@@ -106,7 +106,7 @@ Sincf(float x)
   if (x >= root_root_ep)
     return Sinf(x)/x;
 
-  float sc = 1.0;
+  float sc = 1.0f;
   if (x >= ep)
     {
       float x2 = x*x;
@@ -126,12 +126,34 @@ comm (const float a, const float b, const float c,
       const float d, const float e, const float f,
       float& x, float& y, float& z)
 {
-  x = -b*f+c*e;
-  y = a*f-c*d;
-  z = -a*e+b*d;
+  x = -b*f + c*e;
+  y =  a*f - c*d;
+  z = -a*e + b*d;
 }
 #endif
 
+// v = S*(-e3)/S
+// -2 q0 q2 - 2 q1 q3, 2 q0 q1 - 2 q2 q3, -q0^2 + q1^2 + q2^2 - q3^2
+inline static void
+apply_me3 (float c, float si, float sj, float sk,
+	   float& vx, float& vy, float& vz)
+{
+  vx = -2*c*sj - 2*si*sk;
+  vy =  2*c*si - 2*sj*sk;
+  vz = -c*c + si*si + sj*sj - sk*sk;
+}
+
+// u = S*(e2)/S;
+// 2 q1 q2 - 2 q0 q3, q0^2 - q1^2 + q2^2 - q3^2,  2 q0 q1 + 2 q2 q3
+inline static void
+apply_e2 (float c, float si, float sj, float sk,
+	   float& ux, float& uy, float& uz)
+{
+  ux = 2*si*sj - 2*c*sk;
+  uy = c*c - si*si + sj*sj - sk*sk;
+  uz = 2*c*si + 2*sj*sk;
+}
+ 
 static const float sq_gravity_mss = (9.80665f*9.80665f);
 
 void
@@ -150,16 +172,15 @@ RotorIy::UpdateIMU (float gx, float gy, float gz,
 
   if (m_gain > 0)
     {
-      // m_V = applyVersor (S, -e3);
-      float vx = 2*m_S0*m_Sj - 2*m_Si*m_Sk;
-      float vy = -2*m_S0*m_Si - 2*m_Sj*m_Sk;
-      float vz = -m_S0*m_S0 + m_Si*m_Si + m_Sj*m_Sj - m_Sk*m_Sk;
+      // v = S*(-e3)/S
+      float vx, vy, vz;
+      apply_me3 (m_S0, m_Si, m_Sj, m_Sk, vx, vy, vz);
       float nm2 = (ax+vx)*(ax+vx) + (ay+vy)*(ay+vy) + (az+vz)*(az+vz);
       float nm3 = ax*ax + ay*ay + az*az;
       // Don't fuse if y+v is too short or if |y| is far from |G|.
       //printf("%f %f %f\n", 0.8*sq_gravity_mss, nm3, 1.2*sq_gravity_mss);
       if (nm2 > m_norm_threshold
-	  && 0.8*sq_gravity_mss < nm3 && nm3 < 1.2*sq_gravity_mss)
+	  && 0.8f*sq_gravity_mss < nm3 && nm3 < 1.2f*sq_gravity_mss)
 	{
 	  // u = (1.0/nm)*(y+v);
 	  float inm = invSqrt (nm2);
@@ -179,11 +200,11 @@ RotorIy::UpdateIMU (float gx, float gy, float gz,
 	  float nm = Sqrt (nm2);
 	  if (nm > ep)
 	    {
-	      float ac = m_gain*(-2.0)*invSqrt (nm2)*Atan2 (p0, nm);
+	      float ac = m_gain*(-2.0f)*invSqrt (nm2)*Atan2 (p0, nm);
 	      //printf("%f %f %f %f %f %f\n", omegax, omegay, omegaz, ac*pi, ac*pj, ac*pk);
-	      omegax += ac*pi;
-	      omegay += ac*pj;
-	      omegaz += ac*pk;
+	      omegax -= ac*pi;
+	      omegay -= ac*pj;
+	      omegaz -= ac*pk;
 	    }
 	}
     }
@@ -197,9 +218,12 @@ RotorIy::UpdateIMU (float gx, float gy, float gz,
 	cx, cy, cz);
 
   float dbx, dby, dbz;
-  dbx = ((1.0/12)*(-m_omega0x + 8.0*m_omega1x + 5.0*omegax) + (1.0/24)*m_dt*cx);
-  dby = ((1.0/12)*(-m_omega0y + 8.0*m_omega1y + 5.0*omegay) + (1.0/24)*m_dt*cy);
-  dbz = ((1.0/12)*(-m_omega0z + 8.0*m_omega1z + 5.0*omegaz) + (1.0/24)*m_dt*cz);
+  dbx = ((1.0f/12)*(-m_omega0x + 8.0f*m_omega1x + 5.0f*omegax)
+	 + (1.0f/24)*m_dt*cx);
+  dby = ((1.0f/12)*(-m_omega0y + 8.0f*m_omega1y + 5.0f*omegay)
+	 + (1.0f/24)*m_dt*cy);
+  dbz = ((1.0f/12)*(-m_omega0z + 8.0f*m_omega1z + 5.0f*omegaz)
+	 + (1.0f/24)*m_dt*cz);
   omegax = dbx;
   omegay = dby;
   omegaz = dbz;
@@ -212,10 +236,10 @@ RotorIy::UpdateIMU (float gx, float gy, float gz,
   m_omega1z = omegaz;
 #endif
 
-  float delta = 0.5*m_dt*Sqrt(omegax*omegax + omegay*omegay + omegaz*omegaz);
+  float delta = 0.5f*m_dt*Sqrt(omegax*omegax + omegay*omegay + omegaz*omegaz);
 
   float dc = Cosf(delta);
-  float dsc = -0.5*m_dt*Sincf(delta);
+  float dsc = -0.5f*m_dt*Sincf(delta);
   float dsi = dsc*omegax;
   float dsj = dsc*omegay;
   float dsk = dsc*omegaz;
@@ -338,14 +362,14 @@ RotorIy::UpdateIMU (float gx, float gy, float gz,
       float nmt = tx*tx + ty*ty + tz*tz;
       //printf("%f %f\n", nmt, sq_gravity_mss * 100 * 100);
       if (nmt > sq_gravity_mss * 100 * 100
-	  && nma > 0.8*sq_gravity_mss)
+	  && nma > 0.8f*sq_gravity_mss)
 	{
 	  float inmt = invSqrt (nmt);
 	  // Holizontal north unit vector.
 	  mx = inmt*tx;
 	  my = inmt*ty;
 	  mz = inmt*tz;
-	  //printf("H %f %f %f\n", mx, my, mz);
+	  printf("H %f %f %f\n", mx, my, mz);
 	  float inma = invSqrt (nma);
 	  ax = inma*ax;
 	  ay = inma*ay;
@@ -357,16 +381,14 @@ RotorIy::UpdateIMU (float gx, float gy, float gz,
     }
   if (fuse_type == FUSE_ACC)
     {
-      // v = applyVersor (S, -e3);
-      float vx = 2*m_S0*m_Sj - 2*m_Si*m_Sk;
-      float vy = -2*m_S0*m_Si - 2*m_Sj*m_Sk;
-      float vz = -m_S0*m_S0 + m_Si*m_Si + m_Sj*m_Sj - m_Sk*m_Sk;
+      float vx, vy, vz;
+      apply_me3 (m_S0, m_Si, m_Sj, m_Sk, vx, vy, vz);
       float nma = ax*ax + ay*ay + az*az;
       float nm2 = (ax+vx)*(ax+vx) + (ay+vy)*(ay+vy) + (az+vz)*(az+vz);
       // Don't fuse if y+v is too short or if |y| is far from |G|.
       //printf("%f %f %f\n", 0.8*sq_gravity_mss, nma, 1.2*sq_gravity_mss);
       if (nm2 > m_norm_threshold
-	  && 0.8*sq_gravity_mss < nma && nma < 1.2*sq_gravity_mss)
+	  && 0.8f*sq_gravity_mss < nma && nma < 1.2f*sq_gravity_mss)
 	{
 	  // u = (1.0/nm)*(y+v);
 	  float inm = invSqrt (nm2);
@@ -386,40 +408,38 @@ RotorIy::UpdateIMU (float gx, float gy, float gz,
 	  float nm = Sqrt (nm2);
 	  if (nm > ep)
 	    {
-	      float ac = m_gain*(-2.0)*invSqrt (nm2)*Atan2 (p0, nm);
-	      omegax += ac*pi;
-	      omegay += ac*pj;
-	      omegaz += ac*pk;
+	      float ac = m_gain*(-2.0f)*invSqrt (nm2)*Atan2 (p0, nm);
+	      omegax -= ac*pi;
+	      omegay -= ac*pj;
+	      omegaz -= ac*pk;
 	    }
 	}
     }
   else if (fuse_type == FUSE_ACC_MAG)
     {
-      // v = applyVersor (S, -e3);
-      float vx = 2*m_S0*m_Sj - 2*m_Si*m_Sk;
-      float vy = -2*m_S0*m_Si - 2*m_Sj*m_Sk;
-      float vz = -m_S0*m_S0 + m_Si*m_Si + m_Sj*m_Sj - m_Sk*m_Sk;
-      // u = applyVersor (S, e1);
-      float ux = m_S0*m_S0 + m_Si*m_Si - m_Sj*m_Sj - m_Sk*m_Sk;
-      float uy = 2*m_Si*m_Sj - 2*m_S0*m_Sk;
-      float uz = 2*m_S0*m_Sj + 2*m_Si*m_Sk;
+      // v = S*(-e3)/S
+      float vx, vy, vz;
+      apply_me3 (m_S0, m_Si, m_Sj, m_Sk, vx, vy, vz);
+      // u = S*(e2)/S
+      float ux, uy, uz;
+      apply_e2 (m_S0, m_Si, m_Sj, m_Sk, ux, uy, uz);
       // Notice that y(ACC) and m(MAG) are normalized already.
       // Compute a rotor P which satisfies Pv = y and Pu = m
       float p0, pi, pj, pk;
       ReconstructRotor (vx, vy, vz, ux, uy, uz,
 			ax, ay, az, mx, my, mz,
 			p0, pi, pj, pk);
-      //printf("P %f %f %f %f\n", p0, pi, pj, pk);
+      printf("P %f %f %f %f\n", p0, pi, pj, pk);
       // Y = -2.0*log (P);
       // log(P) = ([pi, pj, pk]/|[pi, pj, pk]|)*atan2(p0, |[pi, pj, pk]|)
       float nm2 = pi*pi + pj*pj + pk*pk;
       float nm = Sqrt (nm2);
       if (nm > ep)
 	{
-	  float ac = m_gain*(-2.0)*invSqrt (nm2)*Atan2 (p0, nm);
-	  omegax += ac*pi;
-	  omegay += ac*pj;
-	  omegaz += ac*pk;
+	  float ac = m_gain*(-2.0f)*invSqrt (nm2)*Atan2 (p0, nm);
+	  omegax -= ac*pi;
+	  omegay -= ac*pj;
+	  omegaz -= ac*pk;
 	  //printf("O %f %f %f\n", omegax, omegay, omegaz);
 	}
     }
@@ -433,9 +453,12 @@ RotorIy::UpdateIMU (float gx, float gy, float gz,
 	cx, cy, cz);
 
   float dbx, dby, dbz;
-  dbx = ((1.0/12)*(-m_omega0x + 8.0*m_omega1x + 5.0*omegax) + (1.0/24)*m_dt*cx);
-  dby = ((1.0/12)*(-m_omega0y + 8.0*m_omega1y + 5.0*omegay) + (1.0/24)*m_dt*cy);
-  dbz = ((1.0/12)*(-m_omega0z + 8.0*m_omega1z + 5.0*omegaz) + (1.0/24)*m_dt*cz);
+  dbx = ((1.0f/12)*(-m_omega0x + 8.0f*m_omega1x + 5.0f*omegax)
+	 + (1.0f/24)*m_dt*cx);
+  dby = ((1.0f/12)*(-m_omega0y + 8.0f*m_omega1y + 5.0f*omegay)
+	 + (1.0f/24)*m_dt*cy);
+  dbz = ((1.0f/12)*(-m_omega0z + 8.0f*m_omega1z + 5.0f*omegaz)
+	 + (1.0f/24)*m_dt*cz);
   omegax = dbx;
   omegay = dby;
   omegaz = dbz;
@@ -448,10 +471,10 @@ RotorIy::UpdateIMU (float gx, float gy, float gz,
   m_omega1z = omegaz;
 #endif
 
-  float delta = 0.5*m_dt*Sqrt(omegax*omegax + omegay*omegay + omegaz*omegaz);
+  float delta = 0.5f*m_dt*Sqrt(omegax*omegax + omegay*omegay + omegaz*omegaz);
 
   float dc = Cosf(delta);
-  float dsc = -0.5*m_dt*Sincf(delta);
+  float dsc = -0.5f*m_dt*Sincf(delta);
   float dsi = dsc*omegax;
   float dsj = dsc*omegay;
   float dsk = dsc*omegaz;
@@ -474,7 +497,7 @@ RotorIy::UpdateIMU (float gx, float gy, float gz,
 void
 RotorIy::SetGain (float gain)
 {
-  if (gain >= 0 && gain < 10)
+  if (gain >= 0)
     m_gain = gain;
 }
 
